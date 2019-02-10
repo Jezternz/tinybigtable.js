@@ -36,7 +36,7 @@ class TinyBigTable
             .tbt .tbt-body{left:0;right:0;bottom:0;overflow:auto;}
             .tbt .tbt-row{position:absolute;}
             .tbt .tbt-body .tbt-row{box-sizing:border-box;}
-            .tbt .tbt-cell{position:absolute;min-width:30px;min-height:30px;top:0;}
+            .tbt .tbt-cell{position:absolute;min-width:30px;min-height:30px;top:0;box-sizing:border-box;}
             .tbt .tbt-cell{border-width:0 1px 1px 0;border-style:solid;border-color:#888;}
             .tbt .tbt-body .tbt-scroller{position:absolute;top:0;left:0;}
         `;
@@ -86,10 +86,16 @@ class TinyBigTable
                 {
                     const x = +gridDataColKeys[j];
                     const cell = gridData[y][x];
-                    const result = this._s.cellRenderer.call(this, { x, y }, cell, row);
+
+                    let result;
+                    try{ result = this._s.cellRenderer.call(this, { x, y }, cell, row); }
+                    catch(er){ result = this._renderingFailed(er); }
                     Promise.resolve(result)
-                        .catch(er => `<span style="color:red;">Rendering failed:${er}</span>`)
-                        .then(res => this._s.virtualHeadCells[x].innerHTML = res);
+                        .catch(er => this._renderingFailed(er))
+                        .then(res => { 
+                            this._s.virtualHeadCells[x].innerHTML = res;
+                            this._cellRendered(x, y, this._s.virtualHeadCells[x]);
+                        });
                 }
             }
             else
@@ -101,10 +107,17 @@ class TinyBigTable
                     {
                         const x = +gridDataColKeys[j];
                         const cell = gridData[y][x];
-                        const result = this._s.cellRenderer.call(this, { x, y }, cell, row);
+                        let result;
+                        try{ result = this._s.cellRenderer.call(this, { x, y }, cell, row); }
+                        catch(er){ result = this._renderingFailed(er); }
                         Promise.resolve(result)
-                            .catch(er => `<span style="color:red;">Rendering failed:${er}</span>`)
-                            .then(res => { if(match.rowI === y) match.cellEls[x].innerHTML = res; });
+                            .catch(er => this._renderingFailed(er))
+                            .then(res => { 
+                                if(match.rowI === y){
+                                    match.cellEls[x].innerHTML = res;
+                                    this._cellRendered(x, y, match.cellEls[x]);
+                                }  
+                            });
                     }
                 }
             }
@@ -152,6 +165,8 @@ class TinyBigTable
         const bufferAbove = bufferSize-bufferBelow;
         this._s = { bufferSize, bufferBelow, bufferAbove, tableId: `tbt-${tableId}`, scrollThrottle };
         this._s.ready = false;
+        this._throttledUpdateCellWidths = this._headThrottle(100, this._updateCellWidths);
+        this._throttledUpdateCellHeights = this._headThrottle(100, this._updateCellHeights);
         
         this._s.container = document.createElement("div");
         this._s.container.classList.add("tbt");
@@ -162,13 +177,15 @@ class TinyBigTable
             </div>
             <div class="tbt-body">
                 <div class="tbt-scroller"></div>
+                <div class="tbt-body-inner"></div>
             </div>
         `;
         this._s.head = this._s.container.querySelector(".tbt-head");
         this._s.headRow = this._s.head.querySelector(".tbt-row");
         this._s.body = this._s.container.querySelector(".tbt-body");
         this._s.body.addEventListener("scroll", this._preScrollChanged());
-        this._s.bodyScroller = this._s.body.querySelector(".tbt-body div:nth-child(1)");
+        this._s.bodyScroller = this._s.body.querySelector(".tbt-scroller");
+        this._s.bodyInner = this._s.body.querySelector(".tbt-body-inner");
         
         this.setParent(parent);
         this.setBufferSize(bufferSize);
@@ -180,6 +197,29 @@ class TinyBigTable
         this._s.ready = true;
         
         this._renderCellWindow();
+    }
+
+    _renderingFailed(er)
+    {
+        return `<span style="color:red;">Rendering failed:${er}</span>`;
+    }
+
+    _cellRendered(x, y, el)
+    {
+        const oldW = this._s.cellWidths[x];
+        const newW = el.offsetWidth;
+        if(newW > oldW)
+        {
+            this._s.cellWidths[x] = newW;
+            this._throttledUpdateCellWidths();
+        }
+        const oldH = this._s.cellHeights[y];
+        const newH = el.offsetHeight;
+        if(newH > oldH)
+        {
+            this._s.cellHeights[y] = newH;
+            this._throttledUpdateCellHeights();
+        }
     }
     
     _renderCellWindow()
@@ -201,13 +241,14 @@ class TinyBigTable
             this._s.headHeightCalculatorChild = document.createElement("div");
             this._s.headHeightCalculator.append(this._s.headHeightCalculatorChild);
         }					
-        this._s.body.append(this._s.headHeightCalculator);
+        this._s.bodyInner.append(this._s.headHeightCalculator);
         this._s.headHeightCalculator.className = "tbt-row";
         this._s.headHeightCalculatorChild.className = "tbt-cell";
         this._s.rowHeight = this._s.headHeightCalculatorChild.offsetHeight;
+        this._s.minCellHeight = this._s.headHeightCalculatorChild.offsetHeight;
         this._s.head.style.height = `${this._s.rowHeight}px`;
         this._s.body.style.top = `${this._s.rowHeight}px`;
-        this._s.body.removeChild(this._s.headHeightCalculator);
+        this._s.bodyInner.removeChild(this._s.headHeightCalculator);
 
         if(!this._s.bodyHeightCalculator)
         {
@@ -215,7 +256,7 @@ class TinyBigTable
             this._s.bodyHeightCalculatorChild = document.createElement("div");
             this._s.bodyHeightCalculator.append(this._s.bodyHeightCalculatorChild);
         }
-        this._s.body.append(this._s.bodyHeightCalculator);
+        this._s.bodyInner.append(this._s.bodyHeightCalculator);
         this._s.bodyHeightCalculator.className = "tbt-row";
         this._s.bodyHeightCalculatorChild.className = "tbt-cell";
         this._s.minCellWidth = this._s.bodyHeightCalculatorChild.offsetWidth;
@@ -224,7 +265,7 @@ class TinyBigTable
         this._s.allColsWidth = (this._s.minCellWidth * this._s.colCount) + 1;
         this._s.bodyScroller.style.height = `${this._s.allRowsHeight}px`;
         this._s.bodyScroller.style.width = `${this._s.allColsWidth}px`;
-        this._s.body.removeChild(this._s.bodyHeightCalculator);
+        this._s.bodyInner.removeChild(this._s.bodyHeightCalculator);
 
         this._s.virtualRowStart = -1;
         this._s.virtualRowEnd = -1;
@@ -255,10 +296,11 @@ class TinyBigTable
                             return cEl;
                         });
                         rowEl.className = "tbt-row";
-                        this._s.body.append(rowEl);
+                        this._s.bodyInner.append(rowEl);
                         return { rowEl, cellEls, rowI: -1 };
                     })
                 ];
+            this._s.cellHeights = Array(this._s.virtualRowCache.length).fill(this._s.minCellHeight);
         }
 
         this._s.virtualHeadCells = Array(this._s.colCount).fill(0).map(c =>
@@ -270,30 +312,67 @@ class TinyBigTable
         });
 
         this._s.cellWidths = Array(this._s.colCount).fill(this._s.minCellWidth);
+        this._updateCellWidths();
+
+        this._scrollChanged();
+        this._renderHead();
+    }
+
+    _updateCellHeights()
+    {
+        let runningTopCounter = 0;
+        this._s.cellTops = Array(this._s.rowCount).fill(0).map((z, i) => {
+            const top = runningTopCounter;
+            runningTopCounter += this._s.cellHeights[i];
+            return top;
+        });
+        if(!this._s.cellHeightStylesheet)
+        {
+            const styleEl = document.createElement('style');
+            document.head.appendChild(styleEl);
+            this._s.cellHeightStylesheet = styleEl.sheet;
+        }
+        for(let i=0;i<Math.min(this._s.cellHeightStylesheet.cssRules.length, this._s.virtualRowCache.length);i++)
+        {
+            const y = this._s.virtualRowStart+i;
+            this._s.cellHeightStylesheet.cssRules[i].style.minHeight = `${this._s.cellHeights[y]}px`;
+            this._s.cellHeightStylesheet.cssRules[i].style.top = `${this._s.cellTops[y]}px`;
+        }
+        if(this._s.virtualRowCache.length < this._s.cellHeightStylesheet.cssRules.length)
+        {
+            // need to delete rules
+            throw new Error("TODO");
+        }
+        else if(this._s.virtualRowCache.length > this._s.cellHeightStylesheet.cssRules.length)
+        {
+            // need to add rules
+            const addRulesCount = this._s.virtualRowCache.length-this._s.cellHeightStylesheet.cssRules.length;
+            const startFrom = this._s.cellHeightStylesheet.cssRules.length;
+            Array(addRulesCount).fill(0).forEach((z, i) =>
+            {
+                const newI = startFrom + i;
+                const y = this._s.virtualRowStart+newI-1;
+                this._s.cellHeightStylesheet.insertRule(
+                    `.${this._s.tableId} .tbt-row:nth-of-type(${newI+1}) .tbt-cell{min-height:${this._s.cellHeights[y]}px;top:${this._s.cellTops[y]}px;}`, 
+                    newI);
+            });
+        }
+    }
+
+    _updateCellWidths()
+    {
         let runningLeftCounter = 0;
         this._s.cellLefts = Array(this._s.colCount).fill(0).map((z, i) => {
             const left = runningLeftCounter;
             runningLeftCounter += this._s.cellWidths[i];
             return left;
         });
-        this._updateCellWidths();
-
-        // populate cells
-
-
-        this._scrollChanged();
-        this._renderHead();
-    }
-
-    _updateCellWidths()
-    {
         if(!this._s.cellWidthStylesheet)
         {
             const styleEl = document.createElement('style');
             document.head.appendChild(styleEl);
             this._s.cellWidthStylesheet = styleEl.sheet;
         }
-
         for(let i=0;i<Math.min(this._s.cellWidthStylesheet.cssRules.length, this._s.colCount);i++)
         {
             this._s.cellWidthStylesheet.cssRules[i].style.minWidth = `${this._s.cellWidths[i]}px`;
@@ -314,7 +393,7 @@ class TinyBigTable
                 const newI = startFrom + i;
                 this._s.cellWidthStylesheet.insertRule(
                     `.${this._s.tableId} .tbt-cell:nth-child(${newI+1}){min-width:${this._s.cellWidths[newI]}px;left:${this._s.cellLefts[newI]}px;}`, 
-                    this._s.cellWidthStylesheet.length);
+                    newI);
             });
         }
 
@@ -322,11 +401,11 @@ class TinyBigTable
 
     _preScrollChanged()
     {
-        let fn = this._headThrottle(this._scrollChanged, this._s.scrollThrottle);
+        let fn = this._headThrottle(this._s.scrollThrottle,this._scrollChanged);
         return () =>
         {
-            this._s.currentScrollY = document.querySelector(".tbt-body").scrollTop;
-            this._s.currentScrollX = document.querySelector(".tbt-body").scrollLeft;
+            this._s.currentScrollY = this._s.body.scrollTop;
+            this._s.currentScrollX = this._s.body.scrollLeft;
             
             this._s.headRow.style.left = `-${this._s.currentScrollX}px`;
             fn();
@@ -343,7 +422,6 @@ class TinyBigTable
             for(let i=this._s.virtualRowStart;i<this._s.virtualRowCache.length;i++)
             {
                 this._s.virtualRowCache[i].rowI = i;
-                this._s.virtualRowCache[i].rowEl.style.top = `${(this._s.virtualRowCache[i].rowI-1) * this._s.rowHeight}px`;
             }
             this._s.virtualRowEnd = this._s.virtualRowCache.length;
             this._s.cellGroupPreRenderer.call(
@@ -391,7 +469,6 @@ class TinyBigTable
                 for(let i=0;i<moveDownCount;i++)
                 {
                     this._s.virtualRowCache[i].rowI = moveDownStart + i;
-                    this._s.virtualRowCache[i].rowEl.style.top = `${(this._s.virtualRowCache[i].rowI-1) * this._s.rowHeight}px`;
                 }
                 this._s.virtualRowCache = 
                 [
@@ -420,7 +497,6 @@ class TinyBigTable
                 {
                     const ii = this._s.virtualRowCache.length - i - 1;
                     this._s.virtualRowCache[ii].rowI = moveUpStart - i - 1;
-                    this._s.virtualRowCache[ii].rowEl.style.top = `${(this._s.virtualRowCache[ii].rowI-1) * this._s.rowHeight}px`;
                 }
 
                 this._s.virtualRowCache = 
@@ -461,7 +537,7 @@ class TinyBigTable
                 this.updateGroupData.bind(this));
     }
 
-    _headThrottle(throttleFn, time)
+    _headThrottle(time, throttleFn)
     {
         var timeOut = null;
         return evt =>
