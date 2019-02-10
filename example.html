@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<script src="tinybigtable.js"></script>
+		<style>
+			.mytable { width:800px; height: 400px; background: #eee; margin: 0 auto;}
+			.mytable .tbt-head{background:#ddd;}
+			.mytable .tbt .tbt-cell {min-width:140px;height:40px;text-align:center;}
+		</style>
+		<script>
+			window.onload = () =>
+			{
+				// Example 1
+				window.mytable = TinyBigTable.create({
+					parent: ".mytable",
+					tableSize: { colCount : 100, rowCount: 100*1000 },
+					
+					// xStart - xEnd, yStart - yEnd is the area that is visible (or buffered) so updateGroupData should be called to trigger rendering
+					cellGroupPreRenderer: ({ xStart, xEnd, yStart, yEnd }, updateGroupData) =>
+					{
+						const obj = [[]];
+						// For header immediately return header values
+						if(yStart===0)
+						{
+							for(let x=xStart;x<=xEnd;x++)
+								obj[0][x] = { loading: 0, text: `${x}` };
+							yStart++;
+						}
+
+						// For other cells, set them to loading = 1
+						for(y=yStart;y<=yEnd;y++)
+							for(let x=xStart;x<=xEnd;x++)
+							{
+								if(!obj[y])obj[y] = [];
+								obj[y][x] = { loading: 1 };
+							}
+						updateGroupData(obj);	
+						
+						// Also wait 100ms then update them with propper values (100ms to simulate an ajax update)
+						for(let y=yStart;y<=yEnd;y++)
+							for(let x=xStart;x<=xEnd;x++)
+							{
+								obj[y][x] = { loading: 0, text: `x:${x} y:${y}` };
+							}
+						setTimeout(() => updateGroupData(obj), 100);
+					},
+					cellRenderer: ({ x, y }, cellData, rowData) => 
+						`<span>${cellData.loading?'':cellData.text}</span>`
+				});
+			}
+		</script>
+	</head>
+	<body>
+		<h1>Example 1 - Fixed cell sizes (1,000 x 100,000)</h1>
+		<div class="mytable"></div>
+	</body>
+</html>
